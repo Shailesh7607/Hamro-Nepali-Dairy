@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [{
+    "label": "Dairy: test, commit staged files and push",
+    "type": "process",
+    "command": "node",
+    "args": ["scripts/sync.mjs", "${input:commitMessage}"],
+    "options": {"cwd": "${workspaceFolder}"},
+    "problemMatcher": []
+  }],
+  "inputs": [{"id": "commitMessage", "type": "promptString", "description": "Describe this code update", "default": "Update dairy website"}]
+}

@@ -1,0 +1,160 @@
+name: Dairy pipeline
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      production_confirmation:
+        description: 'Type DEPLOY to request production after staging (main only)'
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: dairy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Syntax and source policy
+        run: npm run lint
+      - name: Unit, HTTP and PostgreSQL tests
+        run: npm test
+      - name: Install isolated browser
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Desktop and mobile checkout tests
+        run: npm run test:e2e
+      - name: Build production container
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: docker build --build-arg RELEASE_SHA="$RELEASE_SHA" --tag dairy-check:ci .
+      - name: Verify production runtime imports
+        run: docker run --rm --entrypoint node dairy-check:ci --input-type=module -e "await import('./lib/http-app.mjs'); await import('./lib/postgres.mjs');"
+      - name: Save tested image for promotion
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.CONTAINER_PUBLISH_ENABLED == 'true'
+        run: docker save dairy-check:ci --output "$RUNNER_TEMP/dairy-image.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.CONTAINER_PUBLISH_ENABLED == 'true'
+        with:
+          name: tested-image
+          path: ${{ runner.temp }}/dairy-image.tar
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
+  scan:
+    name: Security scans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Dependency vulnerabilities (all dependencies)
+        run: npm audit --audit-level=high
+      - name: Install pinned and checksum-verified Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz --output "$RUNNER_TEMP/gitleaks.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          tar --no-same-owner -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan history for leaked credentials (redacted)
+        run: '"$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml --redact --log-opts="--all"'
+  publish:
+    name: Publish tested image
+    needs: [verify, scan]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.CONTAINER_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tested-image
+          path: ${{ runner.temp }}/tested-image
+      - name: Publish tested immutable image reference
+        id: image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          image="ghcr.io/${REPOSITORY,,}:$RELEASE_SHA"
+          docker load --input "$RUNNER_TEMP/tested-image/dairy-image.tar"
+          docker tag dairy-check:ci "$image"
+          docker push "$image"
+          digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          echo "image=$digest" >> "$GITHUB_OUTPUT"
+  staging:
+    name: Deploy staging
+    needs: publish
+    if: vars.STAGING_DEPLOY_ENABLED == 'true'
+    environment: staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - run: node scripts/deploy.mjs
+        env:
+          DEPLOY_ENVIRONMENT: staging
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+          RELEASE_IMAGE: ${{ needs.publish.outputs.image }}
+          RELEASE_SHA: ${{ github.sha }}
+  production:
+    name: Deploy production
+    needs: [publish, staging]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.production_confirmation == 'DEPLOY' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - run: node scripts/deploy.mjs
+        env:
+          DEPLOY_ENVIRONMENT: production
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+          RELEASE_IMAGE: ${{ needs.publish.outputs.image }}
+          RELEASE_SHA: ${{ github.sha }}

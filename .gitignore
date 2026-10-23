@@ -11,3 +11,6 @@ backups/
 
 playwright-report/
 test-results/
+*.cer
+*.key
+*.db
