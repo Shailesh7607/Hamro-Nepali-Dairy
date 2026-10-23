@@ -1,0 +1,15 @@
+title = "Hamro Nepali Dairy secrets"
+[extend]
+useDefault = true
+[[rules]]
+id = "database-url-with-password"
+description = "Database connection credentials must never be committed"
+regex = '''postgres(?:ql)?://[^\s:/]+:[^\s@]+@[^\s]+'''
+[[rules]]
+id = "supabase-server-secret"
+description = "Supabase secret keys are server-only"
+regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
+[allowlist]
+description = "Supabase publishable keys identify a project and are not secret credentials"
+regexTarget = "match"
+regexes = ['''SUPABASE_PUBLISHABLE_KEY=sb_publishable_[A-Za-z0-9_-]+''']

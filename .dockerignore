@@ -1,0 +1,13 @@
+node_modules
+.env
+.env.*
+.git
+data
+*.sqlite*
+backups
+tests
+
+.github
+playwright-report
+test-results
+playwright.config.mjs

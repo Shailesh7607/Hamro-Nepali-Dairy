@@ -1,0 +1,23 @@
+हाम्रो नेपाली डेरी / Hamro Nepali Dairy
+
+THIS EDITION USES SUPABASE FOR BUSINESS DATA AS WELL AS LOGIN.
+
+Extract this ZIP into one NEW folder. Keep your old folder as a backup.
+Open the extracted folder in VS Code and open Terminal.
+
+1. npm ci
+2. Copy-Item .env.example .env
+3. Read README.md > First start on Windows. Add the Supabase session-pooler
+   database setup URL to .env LOCALLY. Never paste your database password in chat.
+4. npm run setup:database
+5. npm start
+6. Open http://localhost:3000/auth.html
+
+After the initial setup you can use START-WINDOWS.cmd.
+The schema is already created in your connected Supabase project.
+Existing login accounts remain. Local orders/stock have not been uploaded.
+Products require actual available stock entered by an administrator.
+
+A fresh extract does NOT create a new cloud database; all configured copies use
+this same Supabase project. Do not enter test orders in a production project.
+See README.md for secure setup, old-data import and remaining launch requirements.

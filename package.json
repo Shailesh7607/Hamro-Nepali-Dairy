@@ -1,0 +1,26 @@
+{
+  "name": "hamro-nepali-dairy",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --experimental-vm-modules --test --test-isolation=none tests/*.test.mjs",
+    "setup:database": "node --env-file-if-exists=.env scripts/setup-database.mjs",
+    "import:backup": "node --env-file-if-exists=.env scripts/import-business-backup.mjs",
+    "lint": "node scripts/check-source.mjs",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.3",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "@playwright/test": "1.64.1"
+  }
+}
