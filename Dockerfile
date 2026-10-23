@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 ARG RELEASE_SHA=development
 ENV RELEASE_SHA=$RELEASE_SHA
 WORKDIR /app
